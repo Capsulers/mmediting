@@ -10,6 +10,7 @@ import torch
 from mmedit.apis import init_model, restoration_video_inference
 from mmedit.core import tensor2img
 from mmedit.utils import modify_args
+import time
 
 VIDEO_EXTENSIONS = ('.mp4', '.mov')
 
@@ -46,45 +47,46 @@ def parse_args():
 
 
 def main():
-    """Demo for video restoration models.
+    """ Demo for video restoration models.
 
-    Note that we accept video as input/output, when 'input_dir'/'output_dir' is
-    set to the path to the video. But using videos introduces video
+    Note that we accept video as input/output, when 'input_dir'/'output_dir'
+    is set to the path to the video. But using videos introduces video
     compression, which lowers the visual quality. If you want actual quality,
     please save them as separate images (.png).
     """
 
     args = parse_args()
 
-    if args.device < 0 or not torch.cuda.is_available():
-        device = torch.device('cpu')
-    else:
-        device = torch.device('cuda', args.device)
+    model = init_model(
+        args.config, args.checkpoint, device=torch.device('cuda', args.device))
 
-    model = init_model(args.config, args.checkpoint, device=device)
+    for i in range(10000):
+        start_idx=i
+        # time.sleep(500)
+        output = restoration_video_inference(model, args.input_dir,
+                                            args.window_size, start_idx,
+                                            args.filename_tmpl, args.max_seq_len)
+        torch.cuda.empty_cache()
+        time.sleep(10)
+        file_extension = os.path.splitext(args.output_dir)[1]
+        if file_extension in VIDEO_EXTENSIONS:  # save as video
+            h, w = output.shape[-2:]
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_writer = cv2.VideoWriter(args.output_dir, fourcc, 25, (w, h))
+            for i in range(0, output.size(1)):
+                img = tensor2img(output[:, i, :, :, :])
+                video_writer.write(img.astype(np.uint8))
+            cv2.destroyAllWindows()
+            video_writer.release()
+        else:
+            for i in range(args.start_idx, args.start_idx + output.size(1)):
+                output_i = output[:, i - args.start_idx, :, :, :]
+                output_i = tensor2img(output_i)
+                print(args.filename_tmpl.format(start_idx))
 
-    output = restoration_video_inference(model, args.input_dir,
-                                         args.window_size, args.start_idx,
-                                         args.filename_tmpl, args.max_seq_len)
+                # save_path_i = f'{args.output_dir}/{args.filename_tmpl.format(i)}'
+                save_path_i = f'{args.output_dir}/{args.filename_tmpl.format(start_idx)}'
 
-    file_extension = os.path.splitext(args.output_dir)[1]
-    if file_extension in VIDEO_EXTENSIONS:  # save as video
-        h, w = output.shape[-2:]
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(args.output_dir, fourcc, 25, (w, h))
-        for i in range(0, output.size(1)):
-            img = tensor2img(output[:, i, :, :, :])
-            video_writer.write(img.astype(np.uint8))
-        cv2.destroyAllWindows()
-        video_writer.release()
-    else:
-        for i in range(args.start_idx, args.start_idx + output.size(1)):
-            output_i = output[:, i - args.start_idx, :, :, :]
-            output_i = tensor2img(output_i)
-            save_path_i = f'{args.output_dir}/{args.filename_tmpl.format(i)}'
-
-            mmcv.imwrite(output_i, save_path_i)
-
-
+                mmcv.imwrite(output_i, save_path_i)
 if __name__ == '__main__':
     main()
